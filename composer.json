@@ -1,0 +1,15 @@
+{
+    "name": "php-nil/db",
+    "description": "Nil DB ON DBAL - NIL framework component",
+    "keywords": ["nil", "db", "framework", "symfony"],
+    "license": "MIT",
+    "require": {
+        "php": ">=8.5.0",
+        "doctrine/dbal": "^4.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "NilDB\\": "src/"
+        }
+    }
+}
