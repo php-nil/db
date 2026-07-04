@@ -2,16 +2,20 @@
 
 namespace NilDB\Entity;
 
+use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
+use Nil\Kernel\Kernel;
+use Nil\Nil;
 use NilDB\Sheet;
 use Psr\Cache\CacheItemInterface;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 
-// 应用定义
+/**
+ * 配置 管理
+ */
 class Option
 {
     public readonly Sheet $sheet;
-    //protected string $tableName;
 
     protected string $cacheName;
     protected CacheItemInterface $cacheItem;
@@ -24,13 +28,13 @@ class Option
             $entities->getRealTable(Definition::TABLE_OPT)
         );
 
-        $this->cacheName = 'NilDataEntity_' . $entities->data->name . '_' . $entities->name;
+        $this->cacheName = 'NilDBEntity_' . $entities->data->name . '_' . $entities->name;
     }
 
     protected function getCacheItem()
     {
         if (!isset($this->cacheItem)) {
-            $this->cacheItem = (NIL)::cache()->getItem($this->cacheName);
+            $this->cacheItem = Kernel::cache()->get()->getItem($this->cacheName);
         }
         return $this->cacheItem;
     }
@@ -60,7 +64,7 @@ class Option
 
     public function listByTypeIfCache(string $type, int $relation = 0)
     {
-        if (!NIL_DEBUG) {
+        if (!Nil::debug()) {
             $name = $type . $relation;
             $cache = $this->getCache();
             if (isset($cache[$name])) {
@@ -91,7 +95,7 @@ class Option
             $this->createTable();
             $list = $this->sheet->fetchAll($co, $wh);
         }
-        //dump($co, $wh, $list, '=====');
+        
         foreach ($list as &$row) {
             $row['options'] = \json_decode($row['options'], true);
         }
@@ -144,9 +148,11 @@ class Option
         $myTable->addColumn("options", "text");
         $myTable->addColumn("time_add", "datetime", []);
 
-        $myTable->setPrimaryKey(['id']);
-        $myTable->addIndex(['type'], $tbname . '_type');
-        $myTable->addIndex(['relation'], $tbname . '_relation');
+        $myTable->addPrimaryKeyConstraint(
+            PrimaryKeyConstraint::editor()->setUnquotedColumnNames('id')->create()
+        );
+        $myTable->addIndex(['type']);
+        $myTable->addIndex(['relation']);
         $myTable->setComment('tasks');
 
         $conn = $this->entities->data->connection;
@@ -187,6 +193,9 @@ class Option
         return $this->sheet->insertGetId($data);
     }
 
+    /**
+     * 缓存落盘策略问题
+     */
     public function __destruct()
     {
         if ($this->isCacheChanged) {

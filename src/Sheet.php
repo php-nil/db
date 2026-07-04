@@ -186,4 +186,6 @@ class Sheet
      * 
      * ['age'=>'SUM','class'=>'SUM','SUM(PAGE) AS name',['COUNT(name) as name','name']],['name']
      */
+
+    // 批量插入 insertBatch
 }
