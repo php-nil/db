@@ -35,7 +35,7 @@ class Entities
         // 获取清单
         $this->option = new Option($this);
 
-        // 自动加缓存
+        // 所有实例
         $rets = $this->option->listByTypeIfCache('entity');
 
         // 两种 map

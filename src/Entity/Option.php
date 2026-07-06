@@ -31,6 +31,28 @@ class Option
         $this->cacheName = 'NilDBEntity_' . $entities->data->name . '_' . $entities->name;
     }
 
+    /**
+     * 获取options 配置
+     * @param string $type
+     * @param string $name
+     * @param int $relation
+     * 
+     * @return array 配置数组
+     */
+    public function getOption(string $type, string $name, int $relation = 0)
+    {
+        $options = $this->sheet->fetchOne(['options'], [
+            'type' => $type,
+            'name' => $name,
+            'relation' => $relation
+        ]);
+        if (false === $options) {
+            return [];
+        }
+
+        return \json_decode($options, true);
+    }
+
     protected function getCacheItem()
     {
         if (!isset($this->cacheItem)) {
@@ -95,7 +117,7 @@ class Option
             $this->createTable();
             $list = $this->sheet->fetchAll($co, $wh);
         }
-        
+
         foreach ($list as &$row) {
             $row['options'] = \json_decode($row['options'], true);
         }
