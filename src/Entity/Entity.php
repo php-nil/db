@@ -122,7 +122,7 @@ class Entity
         if (!empty($this->table_more)) {
             $join = [];
             foreach ($this->table_more as $location => $name) {
-                $join[$location] = [$name, 'USING(id)'];
+                $join[$location] = $name;
             }
         } else {
             $join = null;

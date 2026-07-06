@@ -302,8 +302,8 @@ class Query
 
     protected function _join(string $func, string $table, string $alias, string|array $on, ?string $fromAlias)
     {
-        if (null !== $fromAlias) {
-            if (null !== $this->alias) {
+        if (null === $fromAlias) {
+            if (null === $this->alias) {
                 throw new RuntimeException('table alias must defined');
             }
             $fromAlias = $this->alias;
