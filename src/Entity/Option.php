@@ -56,7 +56,7 @@ class Option
     protected function getCacheItem()
     {
         if (!isset($this->cacheItem)) {
-            $this->cacheItem = Kernel::cache()->get()->getItem($this->cacheName);
+            $this->cacheItem = Kernel::cache()->getItem($this->cacheName);
         }
         return $this->cacheItem;
     }
