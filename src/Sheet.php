@@ -99,7 +99,6 @@ class Sheet
         }
 
         // 3. 标识符转义（自动适配数据库驱动）
-        $escapedTable = $conn->quoteSingleIdentifier('ai_article');
         $escapedFields = array_map([$conn, 'quoteSingleIdentifier'], $fieldList);
 
         // 4. 构建参数绑定与 VALUES 行（完全复用 insertMany 的参数规范）
@@ -129,7 +128,7 @@ class Sheet
 
         $sql = \sprintf(
             'INSERT INTO %s (%s) VALUES %s',
-            $escapedTable,
+            $conn->quoteSingleIdentifier($this->table),
             $fieldsClause,
             $valuesClause
         );
@@ -175,8 +174,7 @@ class Sheet
 
         $conn = $this->getConnection();
 
-        // 提前转义所有标识符（表名、主键），自动适配数据库驱动
-        $escapedTable = $conn->quoteSingleIdentifier($this->table);
+        // 提前转义
         $escapedPrimaryKey = $conn->quoteSingleIdentifier($primaryKey);
 
         // 1. 收集并转义所有待更新字段
@@ -245,7 +243,7 @@ class Sheet
         // 5. 组装最终 SQL（标识符用反引号转义）
         $sql = \sprintf(
             'UPDATE %s SET %s WHERE %s IN (%s)',
-            $escapedTable,
+            $conn->quoteSingleIdentifier($this->table),
             implode(', ', $setParts),
             $escapedPrimaryKey,
             $whereInClause
@@ -369,6 +367,4 @@ class Sheet
      * 
      * ['age'=>'SUM','class'=>'SUM','SUM(PAGE) AS name',['COUNT(name) as name','name']],['name']
      */
-
-    // 批量插入 insertBatch
 }
