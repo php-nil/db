@@ -66,6 +66,81 @@ class Sheet
     }
 
     /**
+     * 批量 Insert插入多条记录
+     * 
+     * 基础SQL结构：INSERT INTO 表 (字段) VALUES (值1), (值2) ...
+     * 
+     * @return int 受影响行数
+     * 
+     * @throws \InvalidArgumentException 数据格式错误
+     */
+    public function insertMany(array $data): int
+    {
+        // 前置校验
+        if (empty($data)) {
+            throw new \InvalidArgumentException('插入数据不能为空');
+        }
+
+        $conn = $this->getConnection();
+
+        // 1. 收集所有字段（取并集，自动对齐行之间的字段差异）
+        $fields = [];
+        foreach ($data as $index => $row) {
+            if (!\is_array($row)) {
+                throw new \InvalidArgumentException(sprintf('第 %d 行数据必须为数组格式', $index));
+            }
+            foreach ($row as $field => $value) {
+                $fields[$field] = true;
+            }
+        }
+        $fieldList = array_keys($fields);
+        if (empty($fieldList)) {
+            throw new \InvalidArgumentException('插入数据不能包含空字段');
+        }
+
+        // 3. 标识符转义（自动适配数据库驱动）
+        $escapedTable = $conn->quoteSingleIdentifier('ai_article');
+        $escapedFields = array_map([$conn, 'quoteSingleIdentifier'], $fieldList);
+
+        // 4. 构建参数绑定与 VALUES 行（完全复用 insertMany 的参数规范）
+        $params = [];
+        $types = [];
+        $valueRows = [];
+        $rowIndex = 0;
+
+        foreach ($data as $row) {
+            $placeholders = [];
+            foreach ($fieldList as $field) {
+                // 参数名不带冒号（Doctrine 绑定规范），SQL 中拼接冒号
+                $paramName = "{$field}_{$rowIndex}";
+                $placeholders[] = ":{$paramName}";
+                // 缺失字段自动补 NULL
+                $value = \array_key_exists($field, $row) ? $row[$field] : null;
+                $params[$paramName] = $value;
+                $types[$paramName] = Query::valueCheckType($value);
+            }
+            $valueRows[] = '(' . implode(', ', $placeholders) . ')';
+            $rowIndex++;
+        }
+
+        // 6. 组装最终 SQL（严格遵循 INSERT INTO ... VALUES ... 结构）
+        $fieldsClause = implode(', ', $escapedFields);
+        $valuesClause = implode(', ', $valueRows);
+
+        $sql = \sprintf(
+            'INSERT INTO %s (%s) VALUES %s',
+            $escapedTable,
+            $fieldsClause,
+            $valuesClause
+        );
+
+        // return [$sql, $params, $types];
+
+        // 7. 执行并返回影响行数
+        return $conn->executeStatement($sql, $params, $types);
+    }
+
+    /**
      * 更新
      */
     public function update(array $data, array|string|null $where)
@@ -98,59 +173,66 @@ class Sheet
             throw new \InvalidArgumentException('主键字段名不能为空');
         }
 
-        // 1. 高效收集所有待更新字段（键名去重法，O(n)复杂度）
+        $conn = $this->getConnection();
+
+        // 提前转义所有标识符（表名、主键），自动适配数据库驱动
+        $escapedTable = $conn->quoteSingleIdentifier($this->table);
+        $escapedPrimaryKey = $conn->quoteSingleIdentifier($primaryKey);
+
+        // 1. 收集并转义所有待更新字段
         $fields = [];
+        $escapedFields = [];
         foreach ($data as $row) {
             if (!\is_array($row)) {
                 throw new \InvalidArgumentException('每条更新数据必须为数组格式');
             }
             foreach ($row as $field => $value) {
-                $fields[$field] = true;
+                if (!isset($fields[$field])) {
+                    $fields[$field] = true;
+                    $escapedFields[$field] = $conn->quoteSingleIdentifier($field);
+                }
             }
         }
-        $fields = array_keys($fields);
 
-        // 无有效更新字段直接返回
         if (empty($fields)) {
             return 0;
         }
 
-        // 2. 构建参数绑定与每个字段的 CASE WHEN 子句
+        // 2. 构建参数绑定与 CASE WHEN 子句
         $params = [];
         $types = [];
-        $caseWhenPerField = []; // 结构：[字段名 => [WHEN子句集合]]
+        $caseWhenPerField = [];
         $pkPlaceholders = [];
         $rowIndex = 0;
 
         foreach ($data as $pkValue => $row) {
-            // 主键占位符与参数绑定
-            $pkPlaceholder = ":pk_{$rowIndex}";
-            $pkPlaceholders[] = $pkPlaceholder;
-            $params[$pkPlaceholder] = $pkValue;
-            $types[$pkPlaceholder] = Query::valueCheckType($pkValue);
+            // 参数名不带冒号，仅 SQL 中拼接冒号（符合 Doctrine 绑定规范）
+            $pkParamName = "pk_{$rowIndex}";
+            $pkPlaceholders[] = ":{$pkParamName}";
+            $params[$pkParamName] = $pkValue;
+            $types[$pkParamName] = Query::valueCheckType($pkValue);
 
-            // 为当前行的指定字段生成 WHEN 分支
-            foreach ($fields as $field) {
-                if (array_key_exists($field, $row)) {
-                    $valuePlaceholder = ":{$field}_{$rowIndex}";
-                    $caseWhenPerField[$field][] = "WHEN `{$primaryKey}` = {$pkPlaceholder} THEN {$valuePlaceholder}";
-                    $params[$valuePlaceholder] = $row[$field];
-                    $types[$valuePlaceholder] = Query::valueCheckType($row[$field]);
+            // 生成每个字段的 WHEN 分支
+            foreach (array_keys($fields) as $field) {
+                if (\array_key_exists($field, $row)) {
+                    $valueParamName = "{$field}_{$rowIndex}";
+                    $caseWhenPerField[$field][] = "WHEN {$escapedPrimaryKey} = :{$pkParamName} THEN :{$valueParamName}";
+                    $params[$valueParamName] = $row[$field];
+                    $types[$valueParamName] = Query::valueCheckType($row[$field]);
                 }
             }
 
             $rowIndex++;
         }
 
-        // 3. 构建 SET 子句（核心修复：补充 ELSE 保持原值，避免未指定字段被置NULL）
+        // 3. 构建 SET 子句（补充 ELSE 保留原值，避免未指定字段被置 NULL）
         $setParts = [];
-        foreach ($fields as $field) {
+        foreach (array_keys($fields) as $field) {
             if (empty($caseWhenPerField[$field])) {
                 continue;
             }
             $whenClauses = implode(' ', $caseWhenPerField[$field]);
-            // 标识符用反引号转义，ELSE 保留字段原值
-            $setParts[] = "`{$field}` = CASE {$whenClauses} ELSE `{$field}` END";
+            $setParts[] = "{$escapedFields[$field]} = CASE {$whenClauses} ELSE {$escapedFields[$field]} END";
         }
 
         if (empty($setParts)) {
@@ -160,17 +242,17 @@ class Sheet
         // 4. 构建 WHERE IN 条件
         $whereInClause = implode(', ', $pkPlaceholders);
 
-        // 5. 组装最终 SQL（表名、主键均做标识符转义）
-        $sql = sprintf(
-            'UPDATE `%s` SET %s WHERE `%s` IN (%s)',
-            $this->table,
+        // 5. 组装最终 SQL（标识符用反引号转义）
+        $sql = \sprintf(
+            'UPDATE %s SET %s WHERE %s IN (%s)',
+            $escapedTable,
             implode(', ', $setParts),
-            $primaryKey,
+            $escapedPrimaryKey,
             $whereInClause
         );
 
         // 6. 执行并返回影响行数
-        return $this->getConnection()->executeStatement($sql, $params, $types);
+        return $conn->executeStatement($sql, $params, $types);
     }
 
     /**
