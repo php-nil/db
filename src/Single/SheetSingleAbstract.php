@@ -12,7 +12,7 @@ abstract class SheetSingleAbstract extends Sheet
     /**
      * 表单名
      */
-    public const string SHEET_NAME = '';
+    abstract public const string SHEET_NAME = '';
 
     public function __construct(Data $data)
     {
@@ -21,6 +21,7 @@ abstract class SheetSingleAbstract extends Sheet
 
     /**
      * 获取数据表真实的名
+     * 待废弃
      */
     protected function getSheetName()
     {
