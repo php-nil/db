@@ -18,13 +18,13 @@ abstract class SheetFactoryAbstract extends Sheet implements SingleInterface
     /**
      * 单例实例
      */
-    protected static self $instance;
+    private static array $_instances = [];
 
     /**
      * 获取sheet
      */
     public static function sheet(): static
     {
-        return static::$instance ??= new static(Data::get(static::DBAL_NAME), static::SHEET_NAME);
+        return self::$_instances[static::class] ??= new static(Data::get(static::DBAL_NAME), static::SHEET_NAME);
     }
 }
