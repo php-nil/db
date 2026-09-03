@@ -8,13 +8,8 @@ use const \Nil\Kernel\DEFAULT_NAME;
 /**
  * 单表工厂
  */
-abstract class SheetFactoryAbstract extends Sheet
+abstract class SheetFactoryAbstract extends Sheet implements SingleInterface
 {
-    /**
-     * 表单名
-     */
-    abstract public const string SHEET_NAME = '';
-
     /**
      * 数据库链接名
      */
@@ -23,7 +18,7 @@ abstract class SheetFactoryAbstract extends Sheet
     /**
      * 单例实例
      */
-    protected static object $instance;
+    protected static self $instance;
 
     /**
      * 获取sheet

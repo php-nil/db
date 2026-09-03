@@ -7,24 +7,10 @@ use NilDB\Sheet;
 /**
  * 单例sheet
  */
-abstract class SheetSingleAbstract extends Sheet
+abstract class SheetSingleAbstract extends Sheet implements SingleInterface
 {
-    /**
-     * 表单名
-     */
-    abstract public const string SHEET_NAME = '';
-
     public function __construct(Data $data)
     {
-        parent::__construct($data, $this->getSheetName());
-    }
-
-    /**
-     * 获取数据表真实的名
-     * 待废弃
-     */
-    protected function getSheetName()
-    {
-        return static::SHEET_NAME;
+        parent::__construct($data, static::SHEET_NAME);
     }
 }
