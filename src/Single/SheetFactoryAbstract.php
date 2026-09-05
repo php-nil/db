@@ -25,6 +25,15 @@ abstract class SheetFactoryAbstract extends Sheet implements SingleInterface
      */
     public static function sheet(): static
     {
-        return self::$_instances[static::class] ??= new static(Data::get(static::DBAL_NAME), static::SHEET_NAME);
+        return self::$_instances[static::class] ??= new static(Data::get(static::DBAL_NAME), static::getSheetName());
+    }
+
+    /**
+     * 获取数据表真实的名称
+     * 便于子类重写
+     */
+    protected static function getSheetName(): string
+    {
+        return static::SHEET_NAME;
     }
 }
