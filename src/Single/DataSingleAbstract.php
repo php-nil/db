@@ -17,6 +17,14 @@ abstract class DataSingleAbstract
 
     protected static array $map = [];
 
+    /**
+     * 获取数据表
+     * 
+     * @template T of Sheet
+     *
+     * @param class-string<T> $class
+     * @return T
+     */
     protected static function getSheet(string $class): Sheet
     {
         return static::$map[$class] ??= new $class(Data::get(static::DB_NAME));
