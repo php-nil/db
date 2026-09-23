@@ -46,11 +46,11 @@ class Option
             'name' => $name,
             'relation' => $relation
         ]);
-        if (false === $options) {
+        if (false === $options || null === $options) {
             return [];
         }
 
-        return \json_decode($options, true);
+        return \json_decode((string) $options, true) ?: [];
     }
 
     protected function getCacheItem()
@@ -69,11 +69,9 @@ class Option
         }
 
         $item = $this->getCacheItem();
-        if ($item->isHit()) {
-            $this->cacheData = $item->get();
-        } else {
-            $this->cacheData = [];
-        }
+        $data = $item->isHit() ? $item->get() : null;
+        // 兼容历史脏数据（适配器可能将 null 作为命中值返回）
+        $this->cacheData = is_array($data) ? $data : [];
 
         return $this->cacheData;
     }
@@ -81,7 +79,10 @@ class Option
     public function clearCache()
     {
         $this->cacheData = [];
-        $this->getCacheItem()->set(null);
+        $this->isCacheChanged = false;
+
+        $item = $this->getCacheItem();
+        Kernel::cache()->deleteItem($item->getKey());
     }
 
     public function listByTypeIfCache(string $type, int $relation = 0)
@@ -119,7 +120,9 @@ class Option
         }
 
         foreach ($list as &$row) {
-            $row['options'] = \json_decode($row['options'], true);
+            $row['options'] = isset($row['options']) && null !== $row['options']
+                ? \json_decode((string) $row['options'], true)
+                : [];
         }
 
         return $list;
@@ -175,7 +178,7 @@ class Option
         );
         $myTable->addIndex(['type']);
         $myTable->addIndex(['relation']);
-        $myTable->setComment('tasks');
+        $myTable->setComment('entity option');
 
         $conn = $this->entities->data->connection;
         $queries = $schema->toSql($conn->getDatabasePlatform());
@@ -216,15 +219,25 @@ class Option
     }
 
     /**
-     * 缓存落盘策略问题
+     * 缓存落盘：PSR-6 必须显式调用 save()，仅在 Item 上 set 不会持久化。
+     * 缓存被清空（配置发生过变更）时显式删除缓存项——
+     * 注意 set(null)+save() 在部分适配器中会被当作可命中的 null 值持久化。
      */
     public function __destruct()
     {
-        if ($this->isCacheChanged) {
-            $item = $this->getCacheItem();
-            $item->set(
-                empty($this->cacheData) ? null : $this->cacheData
-            );
+        if (!$this->isCacheChanged || !isset($this->cacheItem)) {
+            return;
+        }
+
+        try {
+            if (empty($this->cacheData)) {
+                Kernel::cache()->deleteItem($this->cacheItem->getKey());
+            } else {
+                $this->cacheItem->set($this->cacheData);
+                Kernel::cache()->save($this->cacheItem);
+            }
+        } catch (\Throwable) {
+            // 析构期间不允许抛出异常；缓存写入失败不影响主流程
         }
     }
 }

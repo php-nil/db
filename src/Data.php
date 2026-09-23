@@ -39,6 +39,18 @@ final class Data
     }
 
     /**
+     * 事务执行：闭包内抛异常时自动回滚，正常返回时提交
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T
+     */
+    public function transaction(callable $fn): mixed
+    {
+        return $this->connection->transactional($fn);
+    }
+
+    /**
      * 单表管理
      */
     public function sheet(string $table): Sheet

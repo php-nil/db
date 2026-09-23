@@ -20,20 +20,12 @@ final class QueryJoin
                 $parts[] = \is_string($v)
                     ? $v
                     : (new QueryWhere($query, [$v]))->getSQL();
-            } elseif (strpos(".", $k) !== false) {
-                // 有标记
+            } elseif (str_contains($k, '.')) {
+                // 已带别名的限定名，原样使用
                 $parts[] = "{$k} = {$v}";
             } else {
-                if (false === strpos(".", $k)) {
-                    $a = "{$fromAlias}.{$k}";
-                    $b = "{$join}.{$v}";
-                } else {
-                    $a = $k;
-                    $b = $v;
-                }
-                
-                $a = Query::replaceColumnName($a);
-                $b = Query::replaceColumnName($b);
+                $a = Query::replaceColumnName("{$fromAlias}.{$k}");
+                $b = Query::replaceColumnName("{$join}.{$v}");
                 $parts[] = "{$a} = {$b}";
             }
         }

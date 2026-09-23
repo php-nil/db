@@ -3,7 +3,6 @@
 namespace NilDB;
 
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Types\Types;
 
 /**
  * 单表处理
@@ -60,7 +59,7 @@ class Sheet
      */
     public function insertGetId(array $data)
     {
-        return ($this->insert($data) == 0)
+        return (0 === $this->insert($data))
             ? false
             : $this->getConnection()->lastInsertId();
     }
@@ -98,44 +97,33 @@ class Sheet
             throw new \InvalidArgumentException('插入数据不能包含空字段');
         }
 
-        // 3. 标识符转义（自动适配数据库驱动）
+        // 2. 标识符转义（自动适配数据库驱动）
         $escapedFields = array_map([$conn, 'quoteSingleIdentifier'], $fieldList);
 
-        // 4. 构建参数绑定与 VALUES 行（完全复用 insertMany 的参数规范）
+        // 3. 构建位置参数绑定与 VALUES 行，缺失字段自动补 NULL
         $params = [];
         $types = [];
         $valueRows = [];
-        $rowIndex = 0;
 
         foreach ($data as $row) {
             $placeholders = [];
             foreach ($fieldList as $field) {
-                // 参数名不带冒号（Doctrine 绑定规范），SQL 中拼接冒号
-                $paramName = "{$field}_{$rowIndex}";
-                $placeholders[] = ":{$paramName}";
-                // 缺失字段自动补 NULL
+                $placeholders[] = '?';
                 $value = \array_key_exists($field, $row) ? $row[$field] : null;
-                $params[$paramName] = $value;
-                $types[$paramName] = Query::valueCheckType($value);
+                $params[] = $value;
+                $types[] = Query::valueCheckType($value);
             }
             $valueRows[] = '(' . implode(', ', $placeholders) . ')';
-            $rowIndex++;
         }
 
-        // 6. 组装最终 SQL（严格遵循 INSERT INTO ... VALUES ... 结构）
-        $fieldsClause = implode(', ', $escapedFields);
-        $valuesClause = implode(', ', $valueRows);
-
+        // 4. 组装并执行
         $sql = \sprintf(
             'INSERT INTO %s (%s) VALUES %s',
             $conn->quoteSingleIdentifier($this->table),
-            $fieldsClause,
-            $valuesClause
+            implode(', ', $escapedFields),
+            implode(', ', $valueRows)
         );
 
-        // return [$sql, $params, $types];
-
-        // 7. 执行并返回影响行数
         return $conn->executeStatement($sql, $params, $types);
     }
 
@@ -196,60 +184,59 @@ class Sheet
             return 0;
         }
 
-        // 2. 构建参数绑定与 CASE WHEN 子句
+        // 2. 构建 SET 子句与位置参数（绑定顺序须与 SQL 中占位符顺序一致）
         $params = [];
         $types = [];
-        $caseWhenPerField = [];
-        $pkPlaceholders = [];
-        $rowIndex = 0;
-
-        foreach ($data as $pkValue => $row) {
-            // 参数名不带冒号，仅 SQL 中拼接冒号（符合 Doctrine 绑定规范）
-            $pkParamName = "pk_{$rowIndex}";
-            $pkPlaceholders[] = ":{$pkParamName}";
-            $params[$pkParamName] = $pkValue;
-            $types[$pkParamName] = Query::valueCheckType($pkValue);
-
-            // 生成每个字段的 WHEN 分支
-            foreach (array_keys($fields) as $field) {
-                if (\array_key_exists($field, $row)) {
-                    $valueParamName = "{$field}_{$rowIndex}";
-                    $caseWhenPerField[$field][] = "WHEN {$escapedPrimaryKey} = :{$pkParamName} THEN :{$valueParamName}";
-                    $params[$valueParamName] = $row[$field];
-                    $types[$valueParamName] = Query::valueCheckType($row[$field]);
-                }
-            }
-
-            $rowIndex++;
-        }
-
-        // 3. 构建 SET 子句（补充 ELSE 保留原值，避免未指定字段被置 NULL）
         $setParts = [];
+
         foreach (array_keys($fields) as $field) {
-            if (empty($caseWhenPerField[$field])) {
+            $whenClauses = [];
+            foreach ($data as $pkValue => $row) {
+                if (!\array_key_exists($field, $row)) {
+                    continue;
+                }
+                // WHEN pk = ? THEN ?
+                $whenClauses[] = "WHEN {$escapedPrimaryKey} = ? THEN ?";
+                $params[] = $pkValue;
+                $types[] = Query::valueCheckType($pkValue);
+                $params[] = $row[$field];
+                $types[] = Query::valueCheckType($row[$field]);
+            }
+            // 防御性分支：field 来源于行数据键收集，至少一行包含该字段，whenClauses 必非空
+            // @codeCoverageIgnoreStart
+            if (empty($whenClauses)) {
                 continue;
             }
-            $whenClauses = implode(' ', $caseWhenPerField[$field]);
-            $setParts[] = "{$escapedFields[$field]} = CASE {$whenClauses} ELSE {$escapedFields[$field]} END";
+            // @codeCoverageIgnoreEnd
+            // ELSE 保留原值，避免未指定字段被置 NULL
+            $setParts[] = "{$escapedFields[$field]} = CASE " . implode(' ', $whenClauses)
+                . " ELSE {$escapedFields[$field]} END";
         }
 
+        // 防御性分支：fields 非空且每个字段都产生 SET 片段，setParts 必非空
+        // @codeCoverageIgnoreStart
         if (empty($setParts)) {
             return 0;
         }
+        // @codeCoverageIgnoreEnd
 
-        // 4. 构建 WHERE IN 条件
-        $whereInClause = implode(', ', $pkPlaceholders);
+        // 3. WHERE IN 条件（占位符排在 SET 子句之后）
+        $inPlaceholders = [];
+        foreach ($data as $pkValue => $_) {
+            $inPlaceholders[] = '?';
+            $params[] = $pkValue;
+            $types[] = Query::valueCheckType($pkValue);
+        }
 
-        // 5. 组装最终 SQL（标识符用反引号转义）
+        // 4. 组装并执行
         $sql = \sprintf(
             'UPDATE %s SET %s WHERE %s IN (%s)',
             $conn->quoteSingleIdentifier($this->table),
             implode(', ', $setParts),
             $escapedPrimaryKey,
-            $whereInClause
+            implode(', ', $inPlaceholders)
         );
 
-        // 6. 执行并返回影响行数
         return $conn->executeStatement($sql, $params, $types);
     }
 
@@ -360,11 +347,4 @@ class Sheet
     {
         return $this->aggregation($where, $column, 'AVG');
     }
-
-    // TODO
-    /**
-     * 聚合函数 - 取多个值 - 分组
-     * 
-     * ['age'=>'SUM','class'=>'SUM','SUM(PAGE) AS name',['COUNT(name) as name','name']],['name']
-     */
 }

@@ -1,9 +1,6 @@
 <?php
 namespace NilDB\Single;
 
-use NilDB\Data;
-use NilDB\Sheet;
-
 /**
  * 单例sheet
  */

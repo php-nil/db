@@ -4,10 +4,12 @@ namespace NilDB;
 
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\ParameterType;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
 use NilDB\Helper\QueryJoin;
 use NilDB\Helper\QueryWhere;
+use InvalidArgumentException;
 use RuntimeException;
 
 /**
@@ -67,6 +69,9 @@ class Query
     {
         if (null !== $column) {
             $this->column($column);
+        } else {
+            // DBAL 4 未指定 select 列会抛 "No SELECT expressions given"，null 语义为全部列
+            $this->queryBuilder->select('*');
         }
         if (null !== $where) {
             $this->where($where);
@@ -190,8 +195,10 @@ class Query
         foreach ($expressions as $u) {
             $list = [];
             if (is_string($u)) {
-                // 字符串
-                $fields[] = $u;
+                // 字符串：同样要经过字段替换（如实体逻辑列名 -> 真实列名），
+                // 发生替换时用逻辑列名作为别名，保证结果集键名与调用方传入的列名一致
+                $field = static::replaceColumnName($u);
+                $fields[] = $field === $u ? $u : $field . ' AS "' . $u . '"';
             } else {
                 // 数组
                 // alias=>field
@@ -270,8 +277,11 @@ class Query
 
     /**
      * from table
+     *
+     * @param array|null $join 快捷联表 [别名=>表名] 或 [别名=>[表名, 从表字段, 主表字段]]
+     * @param string     $joinType 快捷联表类型：inner（默认）/left/right
      */
-    public function from(string $table, ?string $alias = null, ?array $join = null)
+    public function from(string $table, ?string $alias = null, ?array $join = null, string $joinType = 'inner')
     {
         $this->table = $table;
 
@@ -283,16 +293,20 @@ class Query
         $this->queryBuilder->from($table, $alias);
 
         if (null !== $join) {
+            $joinMethod = strtolower($joinType) . 'Join';
+            if (!\in_array($joinMethod, ['innerJoin', 'leftJoin', 'rightJoin'], true)) {
+                throw new InvalidArgumentException("joinType({$joinType}) must be inner, left or right");
+            }
             foreach ($join as $k => $v) {
                 if (\is_array($v)) {
                     [$t, $f1, $f2] = $v;
                     if (null === $f2) {
-                        $this->innerJoin($t, $k, $f1, $alias);
+                        $this->$joinMethod($t, $k, $f1, $alias);
                     } else {
-                        $this->innerJoin($t, $k, [$f1 => $f2], $alias);
+                        $this->$joinMethod($t, $k, [$f1 => $f2], $alias);
                     }
                 } else {
-                    $this->innerJoin($v, $k, 'id', $alias);
+                    $this->$joinMethod($v, $k, 'id', $alias);
                 }
             }
         }
@@ -314,7 +328,7 @@ class Query
         $on = QueryJoin::on($this, $on, $fromAlias, $alias);
         $on = '(' . implode(' AND ', $on) . ')';
 
-        $this->queryBuilder->$func($this->alias, $table, $alias, $on);
+        $this->queryBuilder->$func($fromAlias, $table, $alias, $on);
     }
 
     public function innerJoin(string $table, string $alias, string|array $on, ?string $fromAlias = null)
@@ -383,9 +397,9 @@ class Query
                     $k = static::replaceColumnName($k);
                     // 两种情况
                     if (is_array($v)) {
-                        // TODO
-                        // CASE id WHEN 130 THEN 1 WHEN 129 THEN 2 WHEN 131 THEN 3 ELSE 4 END
-                        $this->queryBuilder->addOrderBy('FIELD(' . $k . ",'" . implode("','", $v) . "')");
+                        // 自定义排序：MySQL/MariaDB 用 FIELD()，其他平台（PostgreSQL/SQLite 等）
+                        // 用等价的 CASE WHEN；值全部参数化绑定，防止 SQL 注入
+                        $this->queryBuilder->addOrderBy($this->fieldOrderExpression($k, array_values($v)));
                     } else {
                         $this->queryBuilder->addOrderBy($k, (string) $v);
                     }
@@ -396,6 +410,33 @@ class Query
         }
 
         return $this;
+    }
+
+    /**
+     * 自定义排序表达式：按给定值的先后顺序排列
+     *
+     * MySQL/MariaDB：FIELD(column, v1, v2, ...)，未命中返回 0，命中返回 1..n
+     * 其他平台（PostgreSQL/SQLite/SQLServer…）：标准 SQL 的 CASE WHEN，
+     *   未命中 ELSE 0、命中 THEN 1..n，与 FIELD() 排序语义完全一致
+     * 所有值均经命名参数绑定
+     */
+    protected function fieldOrderExpression(string $column, array $values): string
+    {
+        if ($this->data->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            $placeholders = implode(', ', array_map(
+                fn ($item) => $this->createNamedParameter($item),
+                $values
+            ));
+
+            return 'FIELD(' . $column . ($placeholders !== '' ? ", {$placeholders}" : '') . ')';
+        }
+
+        $cases = [];
+        foreach ($values as $i => $item) {
+            $cases[] = 'WHEN ' . $column . ' = ' . $this->createNamedParameter($item) . ' THEN ' . ($i + 1);
+        }
+
+        return 'CASE ' . implode(' ', $cases) . ' ELSE 0 END';
     }
 
     /**

@@ -24,11 +24,12 @@ class ColumnNameReplace
             $map->setToQuery();
         }
 
-        $return = call_user_func($callable);
-
-        Query::setColumnNameReplace(null);
-
-        return $return;
+        try {
+            return call_user_func($callable);
+        } finally {
+            // 回调异常时也必须复位，避免全局替换器污染后续查询
+            Query::setColumnNameReplace(null);
+        }
     }
     /**
      * 直接设置

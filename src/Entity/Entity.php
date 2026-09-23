@@ -2,6 +2,8 @@
 
 namespace NilDB\Entity;
 
+use InvalidArgumentException;
+use RuntimeException;
 use NilDB\Query;
 use NilDB\ColumnNameReplace;
 
@@ -18,7 +20,7 @@ class Entity
 
     public function __construct(public readonly Entities $entities, public readonly int $id, public readonly string $name, public readonly array $options)
     {
-        $this->sqlColumnReplace = new ColumnNameReplace($options['columnReplace']);
+        $this->sqlColumnReplace = new ColumnNameReplace($options['columnReplace'] ?? []);
 
         // 主附表处理
         foreach ($this->options['tables'] as $location => $va) {
@@ -26,6 +28,18 @@ class Entity
                 $this->table_main = $va;
             } else {
                 $this->table_more[$location] = $va;
+            }
+        }
+    }
+
+    /**
+     * 校验写入字段全部已定义
+     */
+    protected function checkFields(array $data): void
+    {
+        foreach (array_keys($data) as $key) {
+            if (!isset($this->options['columnTable'][$key])) {
+                throw new InvalidArgumentException(sprintf('实体(%s)未定义字段: %s', $this->name, $key));
             }
         }
     }
@@ -50,6 +64,8 @@ class Entity
 
     public function insert(array $data)
     {
+        $this->checkFields($data);
+
         // 转换字段
         $inserts = [];
         foreach ($data as $key => $value) {
@@ -59,18 +75,24 @@ class Entity
         }
         $dt = $this->entities->data;
 
-        // 主表
-        $id = $dt->sheet($this->table_main)->insertGetId($inserts[Definition::LOCATION_MAIN]);
-        unset($inserts[Definition::LOCATION_MAIN]);
+        // 主附表写入必须在同一事务内，避免部分失败产生孤儿数据
+        return $dt->transaction(function () use ($dt, $inserts) {
+            // 主表
+            $id = $dt->sheet($this->table_main)->insertGetId($inserts[Definition::LOCATION_MAIN] ?? []);
+            if (false === $id) {
+                throw new RuntimeException(sprintf('实体(%s)主表写入失败', $this->name));
+            }
+            unset($inserts[Definition::LOCATION_MAIN]);
 
-        // 其他表
-        foreach ($inserts as $location => $data) {
-            $table = $this->options['tables'][$location];
-            $data['id'] = $id;
-            $dt->sheet($table)->insert($data);
-        }
+            // 其他表
+            foreach ($inserts as $location => $row) {
+                $table = $this->options['tables'][$location];
+                $row['id'] = $id;
+                $dt->sheet($table)->insert($row);
+            }
 
-        return $id;
+            return $id;
+        });
     }
 
     public function update(array $data, array|null $where)
@@ -84,6 +106,8 @@ class Entity
 
     public function updateByID(array $data, int|array $id)
     {
+        $this->checkFields($data);
+
         $update = [];
         foreach ($data as $key => $value) {
             $location = $this->options['columnTable'][$key];
@@ -91,12 +115,19 @@ class Entity
             $update[$location][$column] = $value;
         }
 
-        foreach ($update as $location => $data) {
-            $table = $this->options['tables'][$location];
-            $num = $this->entities->data->sheet($table)->update($data, ['id' => $id]);
+        if (empty($update)) {
+            return 0;
         }
 
-        return $num;
+        // 多表更新同一事务；返回各表受影响行数之和
+        return $this->entities->data->transaction(function () use ($update, $id) {
+            $num = 0;
+            foreach ($update as $location => $row) {
+                $table = $this->options['tables'][$location];
+                $num += $this->entities->data->sheet($table)->update($row, ['id' => $id]);
+            }
+            return $num;
+        });
     }
 
     public function delete($where)
@@ -110,10 +141,14 @@ class Entity
 
     public function deleteByID(int|array $id)
     {
-        foreach ($this->options['tables'] as $table) {
-            $num = $this->entities->data->sheet($table)->delete(['id' => $id]);
-        }
-        return $num;
+        // 多表删除同一事务；返回各表受影响行数之和
+        return $this->entities->data->transaction(function () use ($id) {
+            $num = 0;
+            foreach ($this->options['tables'] as $table) {
+                $num += $this->entities->data->sheet($table)->delete(['id' => $id]);
+            }
+            return $num;
+        });
     }
 
     //==== 查询 =====
@@ -128,14 +163,19 @@ class Entity
             $join = null;
         }
 
+        // 附表可能尚无对应行，必须 LEFT JOIN，否则仅主表记录会丢失
         Query::setColumnNameReplace($this->sqlColumnReplace);
-        $query = $this->entities->data->getQuery()->from(
-            $this->table_main,
-            Definition::LOCATION_MAIN,
-            $join
-        );
-        $query->select($column, $where, $limit, $order);
-        Query::setColumnNameReplace(null);
+        try {
+            $query = $this->entities->data->getQuery()->from(
+                $this->table_main,
+                Definition::LOCATION_MAIN,
+                $join,
+                'left'
+            );
+            $query->select($column, $where, $limit, $order);
+        } finally {
+            Query::setColumnNameReplace(null);
+        }
 
         return $query;
     }

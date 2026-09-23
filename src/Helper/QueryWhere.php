@@ -2,6 +2,7 @@
 
 namespace NilDB\Helper;
 
+use InvalidArgumentException;
 use NilDB\Query;
 
 
@@ -76,7 +77,7 @@ final class QueryWhere
                         } elseif (is_array($v)) {
                             $sql[] = $this->whereAnalysis($k, 'IN', $v);
                         } else {
-                            trigger_error('Query where param(value) must string or array!');
+                            throw new InvalidArgumentException('Query where value must be scalar, null or array');
                         }
                     } elseif (is_array($v)) {
                         $sql[] = $this->whereAnalysis(...$v);
@@ -128,24 +129,22 @@ final class QueryWhere
         } elseif (array_key_exists($connector, self::CONNECTOR_BETWEEN)) {
             // BETWEEN
             $connector = self::CONNECTOR_BETWEEN[$connector];
-            if (is_array($value) && isset($value[1])) {
-                $n1 = $this->query->createNamedParameter($value[0]);
-                $n2 = $this->query->createNamedParameter($value[1]);
-                $sql = $field . ' ' . $connector . ' ' . $n1 . ' AND ' . $n2;
-            } else {
-                $sql = $field . ' ' . $connector . ' ' . $value;
+            if (!is_array($value) || !array_key_exists(0, $value) || !array_key_exists(1, $value)) {
+                throw new InvalidArgumentException('BETWEEN value must be an array with two elements');
             }
+            $n1 = $this->query->createNamedParameter($value[0]);
+            $n2 = $this->query->createNamedParameter($value[1]);
+            $sql = $field . ' ' . $connector . ' ' . $n1 . ' AND ' . $n2;
         } elseif (array_key_exists($connector, self::CONNECTOR_IN)) {
             // in
             $connector = self::CONNECTOR_IN[$connector];
-            if (is_array($value)) {
-                $n1 = $this->query->createNamedParameter($value);
-                $sql = $field . ' ' . $connector . ' (' . $n1 . ')';
-            } else {
-                $sql = $field . ' ' . $connector . ' (' . $value . ')';
+            if (!is_array($value)) {
+                throw new InvalidArgumentException('IN value must be an array');
             }
+            $n1 = $this->query->createNamedParameter($value);
+            $sql = $field . ' ' . $connector . ' (' . $n1 . ')';
         } else {
-            trigger_error(message: 'Query where connetor(' . $connector . ') is not defiened!');
+            throw new InvalidArgumentException('Query where connector(' . $connector . ') is not defined');
         }
         // 完成
         return $sql;
